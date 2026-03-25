@@ -4,7 +4,7 @@ with STM32G431xx;
 with STM32G431xx.I2C;
 with STM32G431xx.RCC;
 
-package body STM32G431KB_I2C is
+package body STM32G431_I2C is
 
    use type I2C_Types.Status_Kind;
    use type STM32G431xx.Bit;
@@ -666,4 +666,4 @@ package body STM32G431KB_I2C is
    --     return (Kind => I2C_Types.Ok);
    --  end Recv_Byte;
 
-end STM32G431KB_I2C;
+end STM32G431_I2C;

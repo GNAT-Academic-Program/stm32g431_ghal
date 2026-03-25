@@ -1,7 +1,7 @@
 with I2C_Types;
 with STM32G431xx.I2C;
 
-package STM32G431KB_I2C is
+package STM32G431_I2C is
 
    type Device is private;
 
@@ -100,4 +100,4 @@ private
       Id : I2C_Id;
    end record;
 
-end STM32G431KB_I2C;
+end STM32G431_I2C;

@@ -1,7 +1,7 @@
 with STM32G431xx;
 with STM32G431xx.RCC;
 
-package body STM32G431KB_USART is
+package body STM32G431_USART is
 
    use STM32G431xx.USART;
 
@@ -306,4 +306,4 @@ package body STM32G431KB_USART is
 
    end Rx_Pop;
 
-end STM32G431KB_USART;
+end STM32G431_USART;

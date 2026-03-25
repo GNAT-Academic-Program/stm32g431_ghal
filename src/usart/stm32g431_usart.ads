@@ -4,7 +4,7 @@ with STM32G431xx.USART;
 with System.Storage_Elements;
 use System.Storage_Elements;
 
-package STM32G431KB_USART is
+package STM32G431_USART is
 
    type Device is private;
 
@@ -54,4 +54,4 @@ private
       Id     : Usart_Id;
    end record;
 
-end STM32G431KB_USART;
+end STM32G431_USART;
