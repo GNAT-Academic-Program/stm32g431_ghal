@@ -117,8 +117,7 @@ package body STM32G431_GPIO is
    end;
 
    procedure Driver_Configure (Dev    : Pin;
-                               Cfg    : Gpio_Types.Gpio_Config;
-                               Result : out Gpio_Types.Status) is
+                               Cfg    : Gpio_Types.Gpio_Config) is
    begin
       Enable_Clock (Dev.Port);
 
@@ -143,7 +142,6 @@ package body STM32G431_GPIO is
 
       Write_MODER (Dev, Mode_Bits (Cfg.Mode));
 
-      Result := Gpio_Types.Ok;
    end Driver_Configure;
 
    -----------------------------
@@ -182,9 +180,9 @@ package body STM32G431_GPIO is
    -- Read                   --
    -----------------------------
 
-   function Driver_Read (Dev : Pin) return Boolean is
+   function Driver_Read (Dev : Pin) return MT.Bit is
    begin
-      return Dev.Periph.IDR.IDR.Arr (Integer (Dev.Nbr)) = 1;
+      return MT.Bit (Dev.Periph.IDR.IDR.Arr (Integer (Dev.Nbr)));
    end Driver_Read;
 
 end STM32G431_GPIO;

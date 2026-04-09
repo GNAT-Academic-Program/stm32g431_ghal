@@ -1,6 +1,8 @@
 with Gpio_Types;
 with STM32G431xx.GPIO;
 
+with MT;
+
 package STM32G431_GPIO is
 
    type Pin is private;
@@ -14,8 +16,7 @@ package STM32G431_GPIO is
 
    procedure Driver_Configure
      (Dev    : Pin;
-      Cfg    : Gpio_Types.Gpio_Config;
-      Result : out Gpio_Types.Status);
+      Cfg    : Gpio_Types.Gpio_Config);
 
    procedure Driver_Set (Dev : Pin);
 
@@ -23,7 +24,7 @@ package STM32G431_GPIO is
 
    procedure Driver_Toggle (Dev : Pin);
 
-   function Driver_Read (Dev : Pin) return Boolean;
+   function Driver_Read (Dev : Pin) return MT.Bit;
 
 private
 

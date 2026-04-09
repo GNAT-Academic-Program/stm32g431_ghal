@@ -15,11 +15,13 @@ gpio_generic = "*"
 i2c_generic = "*"
 usart_generic = "*"
 gnat_arm_elf = "*"
+machine_types = "*"
 
 [[pins]]
 gpio_generic = { path = "../gpio_generic" }
 i2c_generic = { path = "../i2c_generic" }
 usart_generic = { path = "../usart_generic" }
+machine_types = { path = "../machine_types" }
 
 [configuration.values]
 # Target microcontroller

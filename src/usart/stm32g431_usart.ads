@@ -18,20 +18,16 @@ package STM32G431_USART is
 
    procedure Init
      (Dev    : in out Device;
-      Cfg    : Usart_Types.Usart_Config;
-      Result : out Usart_Types.Status);
+      Cfg    : Usart_Types.Usart_Config);
 
    procedure Start
-     (Dev    : in out Device;
-      Result : out Usart_Types.Status);
+     (Dev    : in out Device);
 
    procedure Stop
-     (Dev    : in out Device;
-      Result : out Usart_Types.Status);
+     (Dev    : in out Device);
 
    procedure Reset
-     (Dev    : in out Device;
-      Result : out Usart_Types.Status);
+     (Dev    : in out Device);
 
    ------------------------------------------------------------------
    -- Data-plane hooks (required by Usart_Data)

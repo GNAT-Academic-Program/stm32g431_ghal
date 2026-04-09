@@ -65,6 +65,7 @@ package body STM32G431_USART is
          when Usart_Types.B460800 => return 460_800;
          when Usart_Types.B921600 => return 921_600;
          when Usart_Types.B1M     => return 1_000_000;
+         when Usart_Types.B2M     => return 2_000_000;
       end case;
    end Baud_To_Int;
 
@@ -99,8 +100,7 @@ package body STM32G431_USART is
 
    procedure Init
       (Dev    : in out Device;
-       Cfg    : Usart_Types.Usart_Config;
-       Result : out Usart_Types.Status)
+       Cfg    : Usart_Types.Usart_Config)
    is
       Pclk  : Natural;
       Baud  : constant Natural := Baud_To_Int (Cfg.Baud);
@@ -186,47 +186,31 @@ package body STM32G431_USART is
       Dev.Periph.CR3.CTSE :=
          (if Cfg.Flow = Usart_Types.RTS_CTS then 1 else 0);
 
-      Result.Kind := Usart_Types.Ok;
-
    end Init;
 
    ------------------------------------------------------------
 
    procedure Start
-     (Dev    : in out Device;
-      Result : out Usart_Types.Status) is
+     (Dev    : in out Device) is
    begin
       --  Force enable path without relying on prior peripheral state reads.
       Dev.Periph.CR1.TE := 1;
       Dev.Periph.CR1.RE := 1;
       Dev.Periph.CR1.UE := 1;
-
-      Result.Kind := Usart_Types.Ok;
-
    end Start;
 
    ------------------------------------------------------------
 
    procedure Stop
-     (Dev    : in out Device;
-      Result : out Usart_Types.Status) is
+     (Dev    : in out Device) is
    begin
-      if not Is_Enabled (Dev) then
-         Result.Kind := Usart_Types.Ok;
-         return;
-      end if;
-
       Dev.Periph.CR1.UE := 0;
-
-      Result.Kind := Usart_Types.Ok;
-
    end Stop;
 
    ------------------------------------------------------------
 
    procedure Reset
-     (Dev    : in out Device;
-      Result : out Usart_Types.Status) is
+     (Dev    : in out Device) is
    begin
       case Dev.Id is
          when USART_1 =>
@@ -248,8 +232,6 @@ package body STM32G431_USART is
       Dev.Periph.ICR.NCF    := 1;
       Dev.Periph.ICR.ORECF  := 1;
       Dev.Periph.ICR.IDLECF := 1;
-
-      Result.Kind := Usart_Types.Ok;
 
    end Reset;
 
