@@ -1,5 +1,6 @@
 with STM32G431xx;
 with STM32G431xx.RCC;
+with Clock_Tree;
 
 package body STM32G431_USART is
 
@@ -10,7 +11,22 @@ package body STM32G431_USART is
    use type Usart_Types.Flow_Control_Kind;
    use type STM32G431xx.Bit;
 
+   --  Iteration-count timeout for TXE polling in Tx_Push.
+   --  This is not wall-clock time — it scales with CPU speed and optimization
+   --  level. Empirically sized for HSI16 at -O1; revisit if clock changes.
    TXE_Wait_Timeout : constant Natural := 1_000_000;
+
+   --  Iteration-count timeout for HSI16 ready poll in Init.
+   Clock_Startup_Timeout : constant Natural := 1_000_000;
+
+   ------------------------------------------------------------
+   -- Compute_BRR
+   ------------------------------------------------------------
+   --  Computes the BRR mantissa and fraction for 16x oversampling.
+   --  USARTDIV = Pclk / Baud
+   --  Mantissa = floor (USARTDIV)
+   --  Fraction = round (frac (USARTDIV) * 16), clamped to 0..15
+   --  If Fraction rounds up to 16, carry into Mantissa.
 
    procedure Compute_BRR
       (Pclk     : Natural;
@@ -18,14 +34,11 @@ package body STM32G431_USART is
        Mantissa : out STM32G431xx.UInt12;
        Fraction : out STM32G431xx.UInt4)
    is
-      Divisor   : constant Natural := 16 * Baud;
-      Mant      : Natural := Pclk / Divisor;
-      Remm      : constant Natural := Pclk mod Divisor;
-      Frac      : Natural;
+      Divisor : constant Natural := 16 * Baud;
+      Mant    : Natural          := Pclk / Divisor;
+      Remm    : constant Natural := Pclk mod Divisor;
+      Frac    : Natural;
    begin
-      --  Fraction is the rounded fractional part of USARTDIV:
-      --    Frac = round ((Remm * 16) / Divisor)
-      --  using Divisor = 16 * Baud. This keeps Frac in 0 .. 16.
       Frac := ((Remm * 16) + (Divisor / 2)) / Divisor;
 
       if Frac = 16 then
@@ -33,21 +46,19 @@ package body STM32G431_USART is
          Frac := 0;
       end if;
 
-      if Mant > Natural (STM32G431xx.UInt12'Last) then
-         Mantissa := STM32G431xx.UInt12'Last;
-      else
-         Mantissa := STM32G431xx.UInt12 (Mant);
-      end if;
+      Mantissa :=
+        (if Mant > Natural (STM32G431xx.UInt12'Last)
+         then STM32G431xx.UInt12'Last
+         else STM32G431xx.UInt12 (Mant));
 
-      if Frac > Natural (STM32G431xx.UInt4'Last) then
-         Fraction := STM32G431xx.UInt4'Last;
-      else
-         Fraction := STM32G431xx.UInt4 (Frac);
-      end if;
+      Fraction :=
+        (if Frac > Natural (STM32G431xx.UInt4'Last)
+         then STM32G431xx.UInt4'Last
+         else STM32G431xx.UInt4 (Frac));
    end Compute_BRR;
 
    ------------------------------------------------------------
-   -- Baud helper
+   -- Baud_To_Int
    ------------------------------------------------------------
 
    function Baud_To_Int (B : Usart_Types.Baud_Rate) return Natural is
@@ -70,7 +81,7 @@ package body STM32G431_USART is
    end Baud_To_Int;
 
    ------------------------------------------------------------
-   -- Hardware state check
+   -- Is_Enabled
    ------------------------------------------------------------
 
    function Is_Enabled (Dev : Device) return Boolean is
@@ -78,59 +89,91 @@ package body STM32G431_USART is
       return Dev.Periph.CR1.UE = 1;
    end Is_Enabled;
 
+   ------------------------------------------------------------
+   -- Is_Initialized
+   ------------------------------------------------------------
+   --  Guards Enable against being called on an unconfigured peripheral.
+   --  A non-zero BRR mantissa is a reliable proxy for Init having run.
+
+   function Is_Initialized (Dev : Device) return Boolean is
+   begin
+      return Dev.Periph.BRR.DIV_Mantissa /= 0;
+   end Is_Initialized;
+
+   ------------------------------------------------------------
+   -- Make_Device
+   ------------------------------------------------------------
 
    function Make_Device (Id : Usart_Id) return Device is
    begin
       case Id is
-         when USART_1 =>
-            return (Id => Id, Periph => USART1_Periph'Access);
-         when USART_2 =>
-            return (Id => Id, Periph => USART2_Periph'Access);
-         when USART_3 =>
-            return (Id => Id, Periph => USART3_Periph'Access);
-         when UART_4 =>
-            return (Id => Id, Periph => UART4_Periph'Access);
+         when USART_1 => return (Id => Id, Periph => USART1_Periph'Access);
+         when USART_2 => return (Id => Id, Periph => USART2_Periph'Access);
+         when USART_3 => return (Id => Id, Periph => USART3_Periph'Access);
+         when UART_4  => return (Id => Id, Periph => UART4_Periph'Access);
       end case;
-   end;
-  
+   end Make_Device;
 
    ------------------------------------------------------------
-   -- Control plane
+   -- Init
    ------------------------------------------------------------
+   --  Configures the USART peripheral but does not enable it.
+   --  Clock source selection (CCIPRx.USARTxSEL) is a system-level policy
+   --  and must be set by board initialization before calling Init.
+   --  Init reads the active kernel clock via Clock_Tree and computes BRR
+   --  accordingly.
 
    procedure Init
-      (Dev    : in out Device;
-       Cfg    : Usart_Types.Usart_Config)
+      (Dev : in out Device;
+       Cfg : Usart_Types.Usart_Config)
    is
       Pclk  : Natural;
       Baud  : constant Natural := Baud_To_Int (Cfg.Baud);
       Mant  : STM32G431xx.UInt12;
       Frac  : STM32G431xx.UInt4;
+      Loops : Natural := Clock_Startup_Timeout;
    begin
       ------------------------------------------------
-      -- Enable peripheral clock
+      -- Ensure HSI16 is running (needed if it is the
+      -- selected kernel clock source for this USART).
+      -- Harmless if SYSCLK or PCLK is selected instead.
+      ------------------------------------------------
+
+      STM32G431xx.RCC.RCC_Periph.CR.HSION    := 1;
+      STM32G431xx.RCC.RCC_Periph.CR.HSIKERON := 1;
+
+      while STM32G431xx.RCC.RCC_Periph.CR.HSIRDY = 0
+        and then Loops > 0
+      loop
+         Loops := Loops - 1;
+      end loop;
+
+      if STM32G431xx.RCC.RCC_Periph.CR.HSIRDY = 0 then
+         raise Usart_Types.USART_Error with "Init: HSI16 clock not ready";
+      end if;
+
+      ------------------------------------------------
+      -- Enable peripheral bus clock
       ------------------------------------------------
 
       case Dev.Id is
-         when USART_1 =>
-            STM32G431xx.RCC.RCC_Periph.APB2ENR.USART1EN := 1;
-            Pclk := 16_000_000;
-         when USART_2 =>
-            STM32G431xx.RCC.RCC_Periph.APB1ENR1.USART2EN := 1;
-            Pclk := 16_000_000;
-         when USART_3 =>
-            STM32G431xx.RCC.RCC_Periph.APB1ENR1.USART3EN := 1;
-            Pclk := 16_000_000;
-         when UART_4 =>
-            STM32G431xx.RCC.RCC_Periph.APB1ENR1.UART4EN := 1;
-            Pclk := 16_000_000;
+         when USART_1 => STM32G431xx.RCC.RCC_Periph.APB2ENR.USART1EN  := 1;
+         when USART_2 => STM32G431xx.RCC.RCC_Periph.APB1ENR1.USART2EN := 1;
+         when USART_3 => STM32G431xx.RCC.RCC_Periph.APB1ENR1.USART3EN := 1;
+         when UART_4  => STM32G431xx.RCC.RCC_Periph.APB1ENR1.UART4EN  := 1;
       end case;
+
+      ------------------------------------------------
+      -- Read kernel clock from Clock_Tree
+      ------------------------------------------------
+
+      Pclk := Clock_Tree.Get_USART_Clock (Dev.Id);
 
       ------------------------------------------------
       -- Disable before configuration
       ------------------------------------------------
 
-      Dev.Periph.CR1.UE := 0;
+      Dev.Periph.CR1.UE   := 0;
       Dev.Periph.CR1.OVER8 := 0;
 
       ------------------------------------------------
@@ -146,10 +189,9 @@ package body STM32G431_USART is
       ------------------------------------------------
 
       Dev.Periph.CR1.PCE :=
-         (if Cfg.Parity = Usart_Types.None then 0 else 1);
-
+        (if Cfg.Parity = Usart_Types.None then 0 else 1);
       Dev.Periph.CR1.PS :=
-         (if Cfg.Parity = Usart_Types.Odd then 1 else 0);
+        (if Cfg.Parity = Usart_Types.Odd  then 1 else 0);
 
       ------------------------------------------------
       -- Word length
@@ -172,50 +214,60 @@ package body STM32G431_USART is
       ------------------------------------------------
 
       Dev.Periph.CR2.STOP :=
-         (if Cfg.Stop_Bits = Usart_Types.Stop_2
-            then STM32G431xx.UInt2 (2)
-            else STM32G431xx.UInt2 (0));
+        (if Cfg.Stop_Bits = Usart_Types.Stop_2
+         then STM32G431xx.UInt2 (2)
+         else STM32G431xx.UInt2 (0));
 
       ------------------------------------------------
       -- Flow control
       ------------------------------------------------
 
       Dev.Periph.CR3.RTSE :=
-         (if Cfg.Flow = Usart_Types.RTS_CTS then 1 else 0);
-
+        (if Cfg.Flow = Usart_Types.RTS_CTS then 1 else 0);
       Dev.Periph.CR3.CTSE :=
-         (if Cfg.Flow = Usart_Types.RTS_CTS then 1 else 0);
+        (if Cfg.Flow = Usart_Types.RTS_CTS then 1 else 0);
 
    end Init;
 
    ------------------------------------------------------------
+   -- Enable
+   ------------------------------------------------------------
+   --  Enables TX, RX, and the USART itself.
+   --  Raises USART_Error if Init has not been called first.
 
-   procedure Start
-     (Dev    : in out Device) is
+   procedure Enable (Dev : in out Device) is
    begin
-      --  Force enable path without relying on prior peripheral state reads.
+      if not Is_Initialized (Dev) then
+         raise Usart_Types.USART_Error with "Enable: peripheral not initialized";
+      end if;
+
       Dev.Periph.CR1.TE := 1;
       Dev.Periph.CR1.RE := 1;
       Dev.Periph.CR1.UE := 1;
-   end Start;
+   end Enable;
 
    ------------------------------------------------------------
+   -- Disable
+   ------------------------------------------------------------
 
-   procedure Stop
-     (Dev    : in out Device) is
+   procedure Disable (Dev : in out Device) is
    begin
       Dev.Periph.CR1.UE := 0;
-   end Stop;
+   end Disable;
 
    ------------------------------------------------------------
+   -- Reset
+   ------------------------------------------------------------
+   --  Issues an RCC peripheral reset, which clears all registers including
+   --  error flags. The explicit ICR writes are therefore omitted as redundant.
+   --  After Reset, Init must be called again before Enable.
 
-   procedure Reset
-     (Dev    : in out Device) is
+   procedure Reset (Dev : in out Device) is
    begin
       case Dev.Id is
          when USART_1 =>
-            STM32G431xx.RCC.RCC_Periph.APB2RSTR.USART1RST := 1;
-            STM32G431xx.RCC.RCC_Periph.APB2RSTR.USART1RST := 0;
+            STM32G431xx.RCC.RCC_Periph.APB2RSTR.USART1RST  := 1;
+            STM32G431xx.RCC.RCC_Periph.APB2RSTR.USART1RST  := 0;
          when USART_2 =>
             STM32G431xx.RCC.RCC_Periph.APB1RSTR1.USART2RST := 1;
             STM32G431xx.RCC.RCC_Periph.APB1RSTR1.USART2RST := 0;
@@ -223,69 +275,80 @@ package body STM32G431_USART is
             STM32G431xx.RCC.RCC_Periph.APB1RSTR1.USART3RST := 1;
             STM32G431xx.RCC.RCC_Periph.APB1RSTR1.USART3RST := 0;
          when UART_4 =>
-            STM32G431xx.RCC.RCC_Periph.APB1RSTR1.UART4RST := 1;
-            STM32G431xx.RCC.RCC_Periph.APB1RSTR1.UART4RST := 0;
+            STM32G431xx.RCC.RCC_Periph.APB1RSTR1.UART4RST  := 1;
+            STM32G431xx.RCC.RCC_Periph.APB1RSTR1.UART4RST  := 0;
       end case;
+   end Reset;
 
+   ------------------------------------------------------------
+   -- Clear_Errors
+   ------------------------------------------------------------
+   --  Explicitly clears USART error flags without a full peripheral reset.
+   --  Useful for recovering from framing/overrun errors at runtime.
+
+   procedure Clear_Errors (Dev : in out Device) is
+   begin
       Dev.Periph.ICR.PECF   := 1;
       Dev.Periph.ICR.FECF   := 1;
       Dev.Periph.ICR.NCF    := 1;
       Dev.Periph.ICR.ORECF  := 1;
       Dev.Periph.ICR.IDLECF := 1;
-
-   end Reset;
+   end Clear_Errors;
 
    ------------------------------------------------------------
-   -- Data plane
+   -- Tx_Push
    ------------------------------------------------------------
+   --  Writes one byte to TDR, polling TXE with an iteration-count timeout.
+   --  Returns Accepted => False if the peripheral is disabled or times out.
+   --  Note: timeout duration is iteration-count based, not wall-clock time.
 
    procedure Tx_Push
-     (Dev : in out Device;
-      B   : Storage_Element;
-      Ok  : out Boolean) is
+     (Dev      : in out Device;
+      B        : Storage_Element;
+      Accepted : out Boolean)
+   is
       Wait_Count : Natural := 0;
    begin
-
       if not Is_Enabled (Dev) then
-         Ok := False;
+         Accepted := False;
          return;
       end if;
 
       while Dev.Periph.ISR.TXE = 0 loop
          Wait_Count := Wait_Count + 1;
-
          if Wait_Count >= TXE_Wait_Timeout then
-            Ok := False;
+            Accepted := False;
             return;
          end if;
       end loop;
 
       Dev.Periph.TDR.TDR := STM32G431xx.UInt9 (B);
-
-      Ok := True;
-
+      Accepted := True;
    end Tx_Push;
 
    ------------------------------------------------------------
+   -- Rx_Pop
+   ------------------------------------------------------------
+   --  Non-blocking read from RDR. Returns Available => False if no data
+   --  is ready or the peripheral is disabled.
 
    procedure Rx_Pop
-     (Dev : in out Device;
-      B   : out Storage_Element;
-      Ok  : out Boolean) is
+     (Dev       : in out Device;
+      B         : out Storage_Element;
+      Available : out Boolean)
+   is
    begin
-
       if not Is_Enabled (Dev) then
-         Ok := False;
+         Available := False;
          return;
       end if;
 
       if Dev.Periph.ISR.RXNE = 1 then
-         B := Storage_Element (Dev.Periph.RDR.RDR);
-         Ok := True;
+         B         := Storage_Element (Dev.Periph.RDR.RDR);
+         Available := True;
       else
-         Ok := False;
+         Available := False;
       end if;
-
    end Rx_Pop;
 
 end STM32G431_USART;

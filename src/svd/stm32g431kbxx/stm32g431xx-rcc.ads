@@ -107,7 +107,7 @@ package STM32G431xx.RCC is
 
    --  Type definition for CFGR_PPRE
    type CFGR_PPRE_Field
-     (As_Array : Boolean := False)
+     (As_Array : Boolean := True)
    is record
       case As_Array is
          when False =>
@@ -137,7 +137,7 @@ package STM32G431xx.RCC is
       --  AHB prescaler
       HPRE           : CFGR_HPRE_Field := 16#0#;
       --  PB low-speed prescaler (APB1)
-      PPRE           : CFGR_PPRE_Field := (As_Array => False, Val => 16#0#);
+      PPRE           : CFGR_PPRE_Field := (As_Array => True, Arr => (16#0#, 16#0#));
       --  unspecified
       Reserved_14_23 : STM32G431xx.UInt10 := 16#0#;
       --  Microcontroller clock output

@@ -20,10 +20,10 @@ package STM32G431_USART is
      (Dev    : in out Device;
       Cfg    : Usart_Types.Usart_Config);
 
-   procedure Start
+   procedure Enable
      (Dev    : in out Device);
 
-   procedure Stop
+   procedure Disable
      (Dev    : in out Device);
 
    procedure Reset
@@ -34,14 +34,14 @@ package STM32G431_USART is
    ------------------------------------------------------------------
 
    procedure Tx_Push
-     (Dev : in out Device;
-      B   : Storage_Element;
-      Ok  : out Boolean);
+     (Dev       : in out Device;
+      B         : Storage_Element;
+      Accepted  : out Boolean);
 
    procedure Rx_Pop
-     (Dev : in out Device;
-      B   : out Storage_Element;
-      Ok  : out Boolean);
+     (Dev        : in out Device;
+      B          : out Storage_Element;
+      Available  : out Boolean);
 
 private
    type USART_Periph_Ptr is access all STM32G431xx.USART.USART_Peripheral;

@@ -14,6 +14,7 @@ light_tasking_stm32g4xx = "*"
 gpio_generic = "*"
 i2c_generic = "*"
 usart_generic = "*"
+spi_generic = "*"
 gnat_arm_elf = "*"
 machine_types = "*"
 
@@ -21,6 +22,7 @@ machine_types = "*"
 gpio_generic = { path = "../gpio_generic" }
 i2c_generic = { path = "../i2c_generic" }
 usart_generic = { path = "../usart_generic" }
+spi_generic = { path = "../spi_generic" }
 machine_types = { path = "../machine_types" }
 
 [configuration.values]
