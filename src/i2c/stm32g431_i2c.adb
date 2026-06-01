@@ -128,6 +128,54 @@ package body STM32G431_I2C is
       Enable  (Dev);
    end Recover;
 
+   procedure Probe (Dev    : in out Device;
+                    Target : I2C_Types.I2C_Address;
+                    Result : out I2C_Types.Ack_State) is
+      Loops : Natural := Timeout_Loops;
+   begin
+      Result := I2C_Types.Nak;
+
+      if Dev.P.CR1.PE = 0 then
+         Recover_Controller (Dev);
+      end if;
+
+      if Dev.P.CR1.PE = 0 then
+         return;  --  Can't probe if peripheral won't enable
+      end if;
+
+      if Dev.P.ISR.BUSY = 1 then
+         Recover_Controller (Dev);
+      end if;
+
+      if Dev.P.ISR.BUSY = 1 then
+         return;  --  Bus stuck busy
+      end if;
+
+      Clear_Status_Flags (Dev);
+
+      --  Issue a 0-byte write to probe the address
+      Dev.P.CR2 := (SADD    => UInt10 (Natural (Target) * 2),
+                    RD_WRN  => 0,
+                    NBYTES  => 0,
+                    RELOAD  => 0,
+                    AUTOEND => 1,
+                    START   => 1,
+                    others  => <>);
+
+      --  Wait for STOPF or NACKF
+      while Dev.P.ISR.STOPF = 0 and then Dev.P.ISR.NACKF = 0 and then Loops > 0 loop
+         Loops := Loops - 1;
+      end loop;
+
+      if Dev.P.ISR.NACKF = 1 then
+         Result := I2C_Types.Nak;
+      elsif Dev.P.ISR.STOPF = 1 then
+         Result := I2C_Types.Ack;
+      end if;
+
+      Clear_Status_Flags (Dev);
+   end Probe;
+
    --  ----------------------------------------------------------------------
    --  Transaction begin
    --  ----------------------------------------------------------------------

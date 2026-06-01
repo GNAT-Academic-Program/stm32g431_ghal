@@ -22,6 +22,9 @@ package STM32G431_I2C is
    procedure Disable (Dev : in out Device);
    procedure Reset   (Dev : in out Device);
    procedure Recover (Dev : in out Device);
+   procedure Probe   (Dev    : in out Device;
+                      Target : I2C_Types.I2C_Address;
+                      Result : out I2C_Types.Ack_State);
 
    --  Data-plane hooks
 
